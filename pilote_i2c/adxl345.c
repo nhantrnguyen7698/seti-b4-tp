@@ -13,66 +13,45 @@ struct adxl345_device
 
 static int adxl345_count = 0;
 
-static int adxl345_open(struct inode *inode, struct file *file)
-{
-    struct adxl345_device *dev = container_of(inode->i_cdev, struct adxl345_device, miscdev.this_device->devt);
-    if (!dev)
-        return -ENODEV;
+// static int adxl345_open(struct inode *inode, struct file *file)
+// {
+//     struct adxl345_device *dev = container_of(inode->i_cdev, struct adxl345_device, miscdev.this_device->devt);
+//     if (!dev)
+//         return -ENODEV;
 
-    file->private_data = dev;  // Initialiser private_data
-    return 0;
-}
+//     file->private_data = dev;  // Initialiser private_data
+//     return 0;
+// }
 
 static ssize_t adxl345_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 {
-    struct adxl345_device *dev;
-    struct i2c_client *client;
+    struct adxl345_device *dev = container_of(file->private_data, struct adxl345_device, miscdev);
+    struct i2c_client *client = to_i2c_client(dev->miscdev.parent);
     u8 reg_addr = 0x32;  // Adresse DATAX0
     u8 data[2];
     int ret;
 
-    pr_info("adxl345_read: Entered function\n");
-
-    // Récupérer la structure device
-    dev = file->private_data;
-    if (!dev) {
-        pr_err("adxl345_read: private_data is NULL\n");
-        return -ENODEV;
-    }
-
-    client = i2c_get_clientdata(to_i2c_client(dev->miscdev.parent));
-    if (!client) {
-        pr_err("adxl345_read: client is NULL\n");
-        return -ENODEV;
-    }
-
-    pr_info("adxl345_read: Sending register address\n");
-
     // Écrire l'adresse du registre à lire
     ret = i2c_master_send(client, &reg_addr, 1);
     if (ret != 1) {
-        pr_err("i2c_master_send failed: %d\n", ret);
+        pr_err("Failed to send register address\n");
         return -EIO;
     }
 
-    pr_info("adxl345_read: Receiving data\n");
-
-    // Lire les 2 octets (LSB et MSB)
+    // Lire les données
     ret = i2c_master_recv(client, data, 2);
     if (ret != 2) {
-        pr_err("i2c_master_recv failed: %d\n", ret);
+        pr_err("Failed to receive data\n");
         return -EIO;
     }
 
-    pr_info("adxl345_read: Transmitting data to user space\n");
-
-    // Transmettre les données à l'utilisateur
+    // Copier vers l'utilisateur
     if (count == 1) {
-        if (copy_to_user(buf, &data[1], 1))  // MSB seulement
+        if (copy_to_user(buf, &data[1], 1))
             return -EFAULT;
         return 1;
     } else {
-        if (copy_to_user(buf, data, 2))  // LSB + MSB
+        if (copy_to_user(buf, data, 2))
             return -EFAULT;
         return 2;
     }
@@ -80,7 +59,7 @@ static ssize_t adxl345_read(struct file *file, char __user *buf, size_t count, l
 
 static const struct file_operations adxl345_fops = {
     .owner = THIS_MODULE,
-    .open = adxl345_open,
+    // .open = adxl345_open,
     .read = adxl345_read,
 };
 
@@ -89,13 +68,35 @@ static int adxl345_probe(struct i2c_client *client, const struct i2c_device_id *
     struct adxl345_device *dev;
     int ret;
 
+    // // INITIALIZATION
+    // pr_info("ADXL345 detected at address 0x%x\n", client->addr);
+
+    // // Configurer les registres de l'accéléromètre
+    // ret = adxl345_write_reg(client, 0x2C, 0x0A);  // BW_RATE: 100 Hz
+    // if (ret < 0) return ret;
+
+    // ret = adxl345_write_reg(client, 0x2E, 0x00);  // INT_ENABLE: Désactive les interruptions
+    // if (ret < 0) return ret;
+
+    // ret = adxl345_write_reg(client, 0x31, 0x00);  // DATA_FORMAT: Format par défaut
+    // if (ret < 0) return ret;
+
+    // ret = adxl345_write_reg(client, 0x38, 0x00);  // FIFO_CTL: Mode bypass
+    // if (ret < 0) return ret;
+
+    // ret = adxl345_write_reg(client, 0x2D, 0x08);  // POWER_CTL: Mode mesure
+    // if (ret < 0) return ret;
+    // // END OF INITIALIZATION
+
     // Allouer la mémoire pour adxl345_device
     dev = kzalloc(sizeof(*dev), GFP_KERNEL);
     if (!dev)
         return -ENOMEM;
 
     // Associer la structure à i2c_client
+    dev->miscdev.parent = &client->dev;
     i2c_set_clientdata(client, dev);
+    // dev = container_of(inode->i_cdev, struct adxl345_device, miscdev.this_device->devt)
 
     // Configurer la structure miscdevice
     dev->miscdev.minor = MISC_DYNAMIC_MINOR;
