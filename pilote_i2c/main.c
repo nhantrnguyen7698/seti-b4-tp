@@ -1,35 +1,27 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <stdint.h>
-#include <stdlib.h>
+#include <sys/ioctl.h>
+
+#define ADXL345_IOC_MAGIC 'a'
+#define ADXL345_SET_AXIS _IOW(ADXL345_IOC_MAGIC, 1, int)
 
 int main() {
-    int fd;
-    uint8_t buffer[2];
-    ssize_t ret;
-
-    // Ouvrir le fichier spécial dans /dev/
-    fd = open("/dev/adxl345-0", O_RDONLY);
+    int fd = open("/dev/adxl345-0", O_RDONLY);
     if (fd < 0) {
         perror("Failed to open device");
-        return EXIT_FAILURE;
+        return -1;
     }
 
-    // Lire 2 octets (un échantillon complet de l'axe X)
-    ret = read(fd, buffer, sizeof(buffer));
-    if (ret < 0) {
-        perror("Failed to read from device");
+    int axis = 1; // Par exemple, sélectionner l'axe Y
+    printf("Sending ioctl cmd: 0x%x, arg: %d\n", ADXL345_SET_AXIS, axis);
+    if (ioctl(fd, ADXL345_SET_AXIS, axis) < 0) {
+        perror("ioctl failed");
         close(fd);
-        return EXIT_FAILURE;
+        return -1;
     }
 
-    // Afficher la valeur lue
-    int16_t x_value = (buffer[1] << 8) | buffer[0];  // Convertir en entier signé 16 bits
-    printf("X-axis value: %d\n", x_value);
-
-    // Fermer le fichier
+    printf("Axis set to %d\n", axis);
     close(fd);
-
-    return EXIT_SUCCESS;
+    return 0;
 }

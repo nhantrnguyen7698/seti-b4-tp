@@ -5,31 +5,64 @@
 #include <linux/i2c.h>
 #include <linux/miscdevice.h>  // Inclure le framework misc
 #include <linux/fs.h>
+#include <linux/ioctl.h>
+
+#define ADXL345_IOC_MAGIC 'a'
+#define ADXL345_SET_AXIS _IOW(ADXL345_IOC_MAGIC, 1, int)
 
 struct adxl345_device
 {
     struct miscdevice miscdev;
+    int current_axis; // 0 = X, 1 = Y, 2 = Z
 };
 
 static int adxl345_count = 0;
 
-// static int adxl345_open(struct inode *inode, struct file *file)
-// {
-//     struct adxl345_device *dev = container_of(inode->i_cdev, struct adxl345_device, miscdev.this_device->devt);
-//     if (!dev)
-//         return -ENODEV;
+static long adxl345_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
+    struct adxl345_device *dev = file->private_data;
 
-//     file->private_data = dev;  // Initialiser private_data
-//     return 0;
-// }
+    pr_info("ADXL345_IOCTL received cmd: 0x%x, arg: %lu\n", cmd, arg);
+
+    switch (cmd) {
+    case ADXL345_SET_AXIS:
+        if (arg > 2) {
+            pr_err("Invalid axis: %lu\n", arg);
+            return -EINVAL;
+        }
+        dev->current_axis = arg;
+        pr_info("ADXL345 axis set to %lu\n", arg);
+        break;
+
+    default:
+        pr_err("Unknown command: 0x%x\n", cmd);
+        return -ENOTTY; // Commande non supportée
+    }
+
+    return 0;
+}
 
 static ssize_t adxl345_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 {
     struct adxl345_device *dev = container_of(file->private_data, struct adxl345_device, miscdev);
     struct i2c_client *client = to_i2c_client(dev->miscdev.parent);
-    u8 reg_addr = 0x32;  // Adresse DATAX0
+    u8 reg_addr;
     u8 data[2];
     int ret;
+
+    // Déterminer l'adresse du registre en fonction de l'axe
+    switch (dev->current_axis) {
+    case 0:
+        reg_addr = 0x32; // DATAX0
+        break;
+    case 1:
+        reg_addr = 0x34; // DATAY0
+        break;
+    case 2:
+        reg_addr = 0x36; // DATAZ0
+        break;
+    default:
+        return -EINVAL;
+    }
 
     // Écrire l'adresse du registre à lire
     ret = i2c_master_send(client, &reg_addr, 1);
@@ -61,32 +94,13 @@ static const struct file_operations adxl345_fops = {
     .owner = THIS_MODULE,
     // .open = adxl345_open,
     .read = adxl345_read,
+    .unlocked_ioctl = adxl345_ioctl, // Déclarez la fonction ioctl
 };
 
 static int adxl345_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
     struct adxl345_device *dev;
     int ret;
-
-    // // INITIALIZATION
-    // pr_info("ADXL345 detected at address 0x%x\n", client->addr);
-
-    // // Configurer les registres de l'accéléromètre
-    // ret = adxl345_write_reg(client, 0x2C, 0x0A);  // BW_RATE: 100 Hz
-    // if (ret < 0) return ret;
-
-    // ret = adxl345_write_reg(client, 0x2E, 0x00);  // INT_ENABLE: Désactive les interruptions
-    // if (ret < 0) return ret;
-
-    // ret = adxl345_write_reg(client, 0x31, 0x00);  // DATA_FORMAT: Format par défaut
-    // if (ret < 0) return ret;
-
-    // ret = adxl345_write_reg(client, 0x38, 0x00);  // FIFO_CTL: Mode bypass
-    // if (ret < 0) return ret;
-
-    // ret = adxl345_write_reg(client, 0x2D, 0x08);  // POWER_CTL: Mode mesure
-    // if (ret < 0) return ret;
-    // // END OF INITIALIZATION
 
     // Allouer la mémoire pour adxl345_device
     dev = kzalloc(sizeof(*dev), GFP_KERNEL);
@@ -116,8 +130,52 @@ static int adxl345_probe(struct i2c_client *client, const struct i2c_device_id *
         return ret;
     }
 
+    // IITIALISATION DU CAPTEUR ADXL345
+
+    // Configuration du registre BW_RATE (fréquence de sortie des données : 100 Hz)
+    ret = i2c_smbus_write_byte_data(client, 0x2C, 0x0A); // 0x0A = 100 Hz
+    if (ret) {
+        pr_err("Failed to write BW_RATE register\n");
+        goto err_misc_deregister;
+    }
+
+    // Configuration du registre INT_ENABLE (désactiver toutes les interruptions)
+    ret = i2c_smbus_write_byte_data(client, 0x2E, 0x00); // 0x00 = aucune interruption activée
+    if (ret) {
+        pr_err("Failed to write INT_ENABLE register\n");
+        goto err_misc_deregister;
+    }
+
+    // Configuration du registre DATA_FORMAT (format de données par défaut)
+    ret = i2c_smbus_write_byte_data(client, 0x31, 0x00); // 0x00 = format par défaut
+    if (ret) {
+        pr_err("Failed to write DATA_FORMAT register\n");
+        goto err_misc_deregister;
+    }
+
+    // Configuration du registre FIFO_CTL (mode bypass)
+    ret = i2c_smbus_write_byte_data(client, 0x38, 0x00); // 0x00 = bypass mode
+    if (ret) {
+        pr_err("Failed to write FIFO_CTL register\n");
+        goto err_misc_deregister;
+    }
+
+    // Configuration du registre POWER_CTL (mode mesure activé)
+    ret = i2c_smbus_write_byte_data(client, 0x2D, 0x08); // 0x08 = mode mesure
+    if (ret) {
+        pr_err("Failed to write POWER_CTL register\n");
+        goto err_misc_deregister;
+    }
+
+    pr_info("ADXL345 initialized successfully: ");
     pr_info("ADXL345 misc device registered as %s\n", dev->miscdev.name);
     return 0;
+
+err_misc_deregister:
+    misc_deregister(&dev->miscdev);
+    kfree(dev->miscdev.name);
+    kfree(dev);
+    return ret;
 }
 
 static int adxl345_remove(struct i2c_client *client)
@@ -126,6 +184,9 @@ static int adxl345_remove(struct i2c_client *client)
 
     // Récupérer l'instance associée à i2c_client
     dev = i2c_get_clientdata(client);
+
+    // Désactiver le capteur (mode veille)
+    i2c_smbus_write_byte_data(client, 0x2D, 0x00); // 0x00 = mode veille
 
     // Désenregistrer le périphérique auprès du framework misc
     misc_deregister(&dev->miscdev);
