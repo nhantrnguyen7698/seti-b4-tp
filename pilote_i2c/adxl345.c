@@ -60,22 +60,22 @@ static ssize_t adxl345_read(struct file *file, char __user *buf, size_t count, l
     struct adxl345_sample sample;
     // int ret;
 
-    pr_info("Start of reading\n");
+    // pr_info("Start of reading\n");
     // Attendre des données si la FIFO logicielle est vide
     // ret = i2c_smbus_write_byte_data(client, 0x30, 0x04); // Simuler une interruption Watermark
     if (kfifo_is_empty(&dev->samples_fifo)) {
         if (wait_event_interruptible(dev->wait_queue, !kfifo_is_empty(&dev->samples_fifo)))
             return -ERESTARTSYS; // Réessayer en cas de signal
     }
-    pr_info("Reading step 2\n");
+    // pr_info("Reading step 2\n");
     // Récupérer un échantillon depuis la FIFO logicielle
     if (!kfifo_get(&dev->samples_fifo, &sample))
         return -EIO; // Erreur si impossible de récupérer les données
-    pr_info("Reading step 3\n");
+    // pr_info("Reading step 3\n");
     // Copier les données vers l'espace utilisateur
     if (copy_to_user(buf, &sample, sizeof(sample)))
         return -EFAULT;
-    pr_info("Reading END\n");
+    // pr_info("Reading END\n");
     return sizeof(sample);
 }
 
@@ -133,85 +133,82 @@ static int adxl345_read_fifo_sample(struct i2c_client *client, struct adxl345_sa
     return 0;
 }
 
-static irqreturn_t adxl345_irq_handler(int irq, void *dev_id)
-{
-    struct adxl345_device *dev = dev_id;
-    struct i2c_client *client = to_i2c_client(dev->miscdev.parent);
-    struct adxl345_sample sample;
-    u8 fifo_status;
-    int ret;
-
-    // pr_info("Enter ADXL345 interrupt function\n");
-
-    // Lire le registre FIFO_STATUS pour connaître le nombre d'échantillons
-    ret = adxl345_read_reg(client, 0x39, &fifo_status);
-    if (ret < 0) {
-        pr_err("Failed to read FIFO_STATUS: %d\n", ret);
-        return IRQ_NONE;
-    }
-
-    // Vider la FIFO matérielle dans la FIFO logicielle
-    while (fifo_status & 0x1F) { // FIFO Entries dans les 5 bits de poids faible
-        ret = adxl345_read_fifo_sample(client, &sample);
-        if (ret < 0) {
-            pr_err("Failed to read sample from FIFO\n");
-            break;
-        }
-
-        if (!kfifo_put(&dev->samples_fifo, sample))
-            pr_warn("Driver FIFO full, dropping sample\n");
-
-        fifo_status--;
-    }
-
-    // Réveiller les processus en attente
-    wake_up_interruptible(&dev->wait_queue);
-
-    return IRQ_HANDLED;
-}
-
-// irqreturn_t adxl345_int(int irq, void *dev_id) {
-//     struct adxl345_device *dev = (struct adxl345_device *)dev_id;
+// static irqreturn_t adxl345_irq_handler(int irq, void *dev_id)
+// {
+//     struct adxl345_device *dev = dev_id;
 //     struct i2c_client *client = to_i2c_client(dev->miscdev.parent);
-//     int ret, samples_count;
 //     struct adxl345_sample sample;
-//     // Lire le nombre d'échantillons disponibles dans FIFO_STATUS
-//     u8 fifo_status_reg = 0x39; // Adresse du registre FIFO_STATUS
 //     u8 fifo_status;
+//     int ret;
 
-//     pr_info("Enter ADXL345 interrupt function\n");
+//     // pr_info("Enter ADXL345 interrupt function\n");
 
-    
-//     ret = i2c_master_send(client, &fifo_status_reg, 1);
-//     if (ret != 1) {
-//         pr_err("Failed to send FIFO_STATUS register address\n");
-//         return IRQ_HANDLED;
+//     // Lire le registre FIFO_STATUS pour connaître le nombre d'échantillons
+//     ret = adxl345_read_reg(client, 0x39, &fifo_status);
+//     if (ret < 0) {
+//         pr_err("Failed to read FIFO_STATUS: %d\n", ret);
+//         return IRQ_NONE;
 //     }
-//     ret = i2c_master_recv(client, &fifo_status, 1);
-//     if (ret != 1) {
-//         pr_err("Failed to read FIFO_STATUS\n");
-//         return IRQ_HANDLED;
-//     }
-//     samples_count = fifo_status & 0x3F; // Les 6 bits de poids faible
 
-//     // Lire tous les échantillons disponibles
-//     while (samples_count--) {
+//     // Vider la FIFO matérielle dans la FIFO logicielle
+//     while (fifo_status & 0x1F) { // FIFO Entries dans les 5 bits de poids faible
 //         ret = adxl345_read_fifo_sample(client, &sample);
-//         if (ret) {
-//             pr_err("Failed to read FIFO sample\n");
+//         if (ret < 0) {
+//             pr_err("Failed to read sample from FIFO\n");
 //             break;
 //         }
-//         if (!kfifo_put(&dev->samples_fifo, sample)) {
-//             pr_err("Driver FIFO is full\n");
-//             break;
-//         }
+
+//         if (!kfifo_put(&dev->samples_fifo, sample))
+//             pr_warn("Driver FIFO full, dropping sample\n");
+
+//         fifo_status--;
 //     }
 
 //     // Réveiller les processus en attente
-//     wake_up(&dev->wait_queue);
+//     wake_up_interruptible(&dev->wait_queue);
 
 //     return IRQ_HANDLED;
 // }
+
+irqreturn_t adxl345_int(int irq, void *dev_id) {
+    struct adxl345_device *dev = (struct adxl345_device *)dev_id;
+    struct i2c_client *client = to_i2c_client(dev->miscdev.parent);
+    int ret, samples_count;
+    struct adxl345_sample sample;
+    // Lire le nombre d'échantillons disponibles dans FIFO_STATUS
+    u8 fifo_status_reg = 0x39; // Adresse du registre FIFO_STATUS
+    u8 fifo_status;
+    
+    ret = i2c_master_send(client, &fifo_status_reg, 1);
+    if (ret != 1) {
+        pr_err("Failed to send FIFO_STATUS register address\n");
+        return IRQ_HANDLED;
+    }
+    ret = i2c_master_recv(client, &fifo_status, 1);
+    if (ret != 1) {
+        pr_err("Failed to read FIFO_STATUS\n");
+        return IRQ_HANDLED;
+    }
+    samples_count = fifo_status & 0x3F; // Les 6 bits de poids faible
+
+    // Lire tous les échantillons disponibles
+    while (samples_count--) {
+        ret = adxl345_read_fifo_sample(client, &sample);
+        if (ret) {
+            pr_err("Failed to read FIFO sample\n");
+            break;
+        }
+        if (!kfifo_put(&dev->samples_fifo, sample)) {
+            // pr_err("Driver FIFO is full\n");
+            break;
+        }
+    }
+
+    // Réveiller les processus en attente
+    wake_up(&dev->wait_queue);
+
+    return IRQ_HANDLED;
+}
 
 static int adxl345_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
@@ -290,7 +287,7 @@ static int adxl345_probe(struct i2c_client *client, const struct i2c_device_id *
 
     // Enregistrer un gestionnaire d'interruption avec Threaded IRQ
     ret = devm_request_threaded_irq(&client->dev, client->irq, NULL,
-                                adxl345_irq_handler,
+                                adxl345_int,
                                 IRQF_ONESHOT, "adxl345_irq", dev);
     if (ret) {
         pr_err("Failed to request IRQ: %d\n", ret);
