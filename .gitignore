@@ -15,6 +15,8 @@ pilote_i2c/adxl345.mod.o
 pilote_i2c/adxl345.o
 pilote_i2c/modules.order
 pilote_i2c/Module.symvers
+pilote_i2c/main
+pilote_i2c/test_adxl
 qemu-system-arm
 linux-5.10.19/
 gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabihf/
